@@ -18,7 +18,7 @@ Minimum supported libcurl version : 7.28.0
 Build
 =====
 
-  ./configure && make
+  autoreconf && ./configure && make
 
 Adding new libcurl symbol
 =========================
@@ -27,7 +27,7 @@ Adding new libcurl symbol
 * autoreconf
 * make clean
 * ./configure
-* edit curl-helper.c and curl.ml*
+* edit curl-helper.c and curl.ml
 
 Making release
 ==============
