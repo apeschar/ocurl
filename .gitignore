@@ -1,5 +1,6 @@
 /_build
 /config.*
+/configure
 /autom4te.cache
 /clibs.sexp
 /Makefile
