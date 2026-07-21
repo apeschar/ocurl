@@ -29,12 +29,14 @@
 (executables
  (names
   test_lwt
+  test_lwt_pool
   test_lwt_unit
   test_lwt_ws)
  (libraries curl.lwt)
  (preprocess (pps lwt_ppx))
  (modules
   test_lwt
+  test_lwt_pool
   test_lwt_unit
   test_lwt_ws))
 
@@ -46,3 +48,7 @@
 (rule
  (alias runtest)
  (action (run ./test_memory_leaks.exe)))
+
+(rule
+ (alias runtest)
+ (action (run ./test_lwt_pool.exe)))

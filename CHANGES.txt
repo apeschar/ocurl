@@ -1,5 +1,7 @@
 ## unreleased
 
+* Add an explicit Curl_lwt.Pool API while retaining the global pool as the
+  default for top-level Curl_lwt operations.
 * Add support for proxy types CURLPROXY_HTTPS and CURLPROXY_HTTPS2.
   (Volker Diels-Grabsch)
 * Add support for CURLOPT_UNIX_SOCKET_PATH.
