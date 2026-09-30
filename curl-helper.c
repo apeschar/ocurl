@@ -13,6 +13,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 
 #include <caml/version.h>
 #ifndef _WIN32
@@ -99,6 +100,44 @@ static value Val_cons(value list, value v) { return Val_pair(v,list); }
 #endif
 #endif  /* _WIN32 */
 
+#if HAVE_DECL_CURL_LOCK_DATA_CA
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <pthread.h>
+#endif
+#endif
+
+typedef struct CaShare CaShare;
+struct CaShare {
+    CURLSH *handle;
+    atomic_size_t refs;
+#if HAVE_DECL_CURL_LOCK_DATA_CA
+#ifdef _WIN32
+    CRITICAL_SECTION mutex[2];
+#else
+    pthread_mutex_t mutex[2];
+#endif
+#endif
+};
+
+static void ca_share_release(CaShare *share)
+{
+    if (share && atomic_fetch_sub(&share->refs, 1) == 1) {
+        curl_share_cleanup(share->handle);
+#if HAVE_DECL_CURL_LOCK_DATA_CA
+        for (int i = 0; i < 2; ++i) {
+#ifdef _WIN32
+            DeleteCriticalSection(&share->mutex[i]);
+#else
+            pthread_mutex_destroy(&share->mutex[i]);
+#endif
+        }
+#endif
+        free(share);
+    }
+}
+
 typedef struct Connection Connection;
 typedef struct ConnectionList ConnectionList;
 
@@ -129,6 +168,7 @@ typedef enum OcamlValues
 struct Connection
 {
     CURL *handle;
+    CaShare *ca_share;
 
     value ocamlValues;
 
@@ -766,6 +806,7 @@ static Connection* allocConnection(CURL* h)
     caml_register_global_root(&connection->ocamlValues);
 
     connection->handle = h;
+    connection->ca_share = NULL;
     curl_easy_setopt(h, CURLOPT_PRIVATE, connection);
 
     connection->refcount = 0;
@@ -826,6 +867,8 @@ static void removeConnection(Connection *connection, int finalization)
       caml_release_runtime_system();
       curl_easy_cleanup(connection->handle);
       caml_acquire_runtime_system();
+      ca_share_release(connection->ca_share);
+      connection->ca_share = NULL;
     }
 
     connection->handle = NULL;
@@ -1783,6 +1826,8 @@ value caml_curl_easy_reset(value conn)
 
     checkConnection(connection);
     curl_easy_reset(connection->handle);
+    ca_share_release(connection->ca_share);
+    connection->ca_share = NULL;
     curl_easy_setopt(connection->handle, CURLOPT_PRIVATE, connection);
     resetOcamlValues(connection);
 
@@ -5717,6 +5762,131 @@ value caml_curl_ws_send(value conn_v, value buffer_v, value flags_v)
   caml_failwith("WebSocket support not available");
 }
 #endif
+
+#define Ca_share_val(v) (*(CaShare **)Data_custom_val(v))
+
+static void ca_share_finalize(value v)
+{
+    ca_share_release(Ca_share_val(v));
+}
+
+static struct custom_operations ca_share_ops = {
+    "ocurl.ca_share", ca_share_finalize,
+    custom_compare_default, custom_hash_default,
+    custom_serialize_default, custom_deserialize_default,
+    custom_compare_ext_default, custom_fixed_length_default
+};
+
+#if HAVE_DECL_CURL_LOCK_DATA_CA
+static void ca_share_lock(CURL *easy, curl_lock_data type,
+                          curl_lock_access access, void *userp)
+{
+    CaShare *share = userp;
+    int i = type == CURL_LOCK_DATA_CA ? 0 : 1;
+    (void)easy;
+    (void)access;
+#ifdef _WIN32
+    EnterCriticalSection(&share->mutex[i]);
+#else
+    pthread_mutex_lock(&share->mutex[i]);
+#endif
+}
+
+static void ca_share_unlock(CURL *easy, curl_lock_data type, void *userp)
+{
+    CaShare *share = userp;
+    int i = type == CURL_LOCK_DATA_CA ? 0 : 1;
+    (void)easy;
+#ifdef _WIN32
+    LeaveCriticalSection(&share->mutex[i]);
+#else
+    pthread_mutex_unlock(&share->mutex[i]);
+#endif
+}
+#endif
+
+value caml_curl_share_ca_init(value unit)
+{
+    CAMLparam1(unit);
+    CAMLlocal1(v);
+#if HAVE_DECL_CURL_LOCK_DATA_CA
+    CURLSHcode result;
+    CaShare *share;
+    v = caml_alloc_custom(&ca_share_ops, sizeof(CaShare *), 0, 1);
+    Ca_share_val(v) = NULL;
+    share = calloc(1, sizeof(*share));
+    if (!share) caml_raise_out_of_memory();
+    share->refs = 1;
+    for (int i = 0; i < 2; ++i) {
+#ifdef _WIN32
+        InitializeCriticalSection(&share->mutex[i]);
+#else
+        if (pthread_mutex_init(&share->mutex[i], NULL)) {
+            while (i > 0) pthread_mutex_destroy(&share->mutex[--i]);
+            free(share);
+            caml_failwith("Curl.Share: mutex initialization failed");
+        }
+#endif
+    }
+    share->handle = curl_share_init();
+    if (!share->handle) {
+        ca_share_release(share);
+        caml_raise_out_of_memory();
+    }
+    result = curl_share_setopt(share->handle, CURLSHOPT_SHARE,
+                              CURL_LOCK_DATA_CA);
+    if (!result)
+        result = curl_share_setopt(share->handle, CURLSHOPT_USERDATA, share);
+    if (!result)
+        result = curl_share_setopt(share->handle, CURLSHOPT_LOCKFUNC,
+                                  ca_share_lock);
+    if (!result)
+        result = curl_share_setopt(share->handle, CURLSHOPT_UNLOCKFUNC,
+                                  ca_share_unlock);
+    if (result) {
+        const char *message = curl_share_strerror(result);
+        ca_share_release(share);
+        caml_failwith(message);
+    }
+    Ca_share_val(v) = share;
+    CAMLreturn(v);
+#else
+    caml_failwith("Curl.Share: CA sharing is not available in this libcurl");
+#endif
+}
+
+value caml_curl_set_share(value conn_v, value share_v)
+{
+    CAMLparam2(conn_v, share_v);
+    Connection *conn = Connection_val(conn_v);
+    CaShare *share = Is_some(share_v) ? Ca_share_val(Some_val(share_v)) : NULL;
+    CURLcode result;
+    if (!conn->handle) caml_invalid_argument("Curl.set_share: closed handle");
+    result = curl_easy_setopt(conn->handle, CURLOPT_SHARE,
+                             share ? share->handle : NULL);
+    if (result) raiseError(conn, result);
+    if (share) atomic_fetch_add(&share->refs, 1);
+    ca_share_release(conn->ca_share);
+    conn->ca_share = share;
+    CAMLreturn(Val_unit);
+}
+
+value caml_curl_set_ca_cache_timeout(value conn_v, value timeout_v)
+{
+    CAMLparam2(conn_v, timeout_v);
+#if HAVE_DECL_CURLOPT_CA_CACHE_TIMEOUT
+    Connection *conn = Connection_val(conn_v);
+    CURLcode result;
+    if (!conn->handle)
+        caml_invalid_argument("Curl.set_ca_cache_timeout: closed handle");
+    result = curl_easy_setopt(conn->handle, CURLOPT_CA_CACHE_TIMEOUT,
+                             Long_val(timeout_v));
+    if (result) raiseError(conn, result);
+    CAMLreturn(Val_unit);
+#else
+    caml_failwith("Curl: CA cache timeout is not available in this libcurl");
+#endif
+}
 
 #ifdef __cplusplus
 }

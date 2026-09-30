@@ -701,6 +701,23 @@ val global_init : initOption -> unit
 val global_cleanup : unit -> unit
 val init : unit -> t
 val reset : t -> unit
+
+module Share : sig
+  type t
+  val create_ca_cache : unit -> t
+  (** Create a thread-safe parsed CA cache. Requires libcurl's
+      [CURL_LOCK_DATA_CA] extension with OpenSSL. Connections, TLS sessions,
+      cookies and DNS are not shared. Released automatically when neither
+      OCaml nor any attached easy handle references it. *)
+end
+
+val set_share : t -> Share.t option -> unit
+(** Attach a CA cache, or detach with [None]. Only call between transfers.
+    [cleanup] and [reset] detach automatically. *)
+
+val set_ca_cache_timeout : t -> int -> unit
+(** Maximum age of a cached CA store in seconds: 0 disables caching,
+    -1 retains it indefinitely. libcurl's default is 86400. *)
 (** Reset [t] to the default state *)
 
 val setopt : t -> curlOption -> unit

@@ -633,6 +633,14 @@ external global_init : initOption -> unit = "caml_curl_global_init"
 external global_cleanup : unit -> unit = "caml_curl_global_cleanup"
 external init : unit -> t = "caml_curl_easy_init"
 external reset : t -> unit = "caml_curl_easy_reset"
+
+module Share = struct
+  type t
+  external create_ca_cache : unit -> t = "caml_curl_share_ca_init"
+end
+
+external set_share : t -> Share.t option -> unit = "caml_curl_set_share"
+external set_ca_cache_timeout : t -> int -> unit = "caml_curl_set_ca_cache_timeout"
 external setopt : t -> curlOption -> unit = "caml_curl_easy_setopt"
 external perform : t -> unit = "caml_curl_easy_perform"
 external cleanup : t -> unit = "caml_curl_easy_cleanup"
