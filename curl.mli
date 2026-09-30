@@ -701,6 +701,7 @@ val global_init : initOption -> unit
 val global_cleanup : unit -> unit
 val init : unit -> t
 val reset : t -> unit
+(** Reset [t] to the default state *)
 
 module Share : sig
   type t
@@ -718,7 +719,6 @@ val set_share : t -> Share.t option -> unit
 val set_ca_cache_timeout : t -> int -> unit
 (** Maximum age of a cached CA store in seconds: 0 disables caching,
     -1 retains it indefinitely. libcurl's default is 86400. *)
-(** Reset [t] to the default state *)
 
 val setopt : t -> curlOption -> unit
 (** @raise NotImplemented for not implemented option *)
