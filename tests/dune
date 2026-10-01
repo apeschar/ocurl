@@ -9,3 +9,9 @@
  (modules test_ca_share_lwt)
  (package curl_lwt)
  (libraries curl_lwt lwt.unix))
+
+(test
+ (name test_abort_lwt)
+ (modules test_abort_lwt)
+ (package curl_lwt)
+ (libraries curl_lwt lwt.unix))

@@ -25,9 +25,15 @@ module Pool : sig
       @return the transfer result code *)
   val perform : t -> Curl.t -> Curl.curlCode Lwt.t
 
-  (** Cancel active transfers and destroy the pool's multi handle.
+  (** Explicitly remove an active easy handle and resolve its transfer with
+      [CURLE_ABORTED_BY_CALLBACK], without cancelling any promise. Must be called
+      outside libcurl callbacks. A completed/absent handle or closed pool is a
+      no-op; the easy handle remains reusable. *)
+  val abort : t -> Curl.t -> unit
 
-      Active transfer promises are cancelled. Easy handles are removed from the
+  (** Abort active transfers and destroy the pool's multi handle.
+
+      Active transfers resolve normally with [CURLE_ABORTED_BY_CALLBACK]. Easy handles are removed from the
       pool but are not passed to {!Curl.cleanup}, and may be reused. Calling
       [cleanup] more than once has no effect. *)
   val cleanup : t -> unit

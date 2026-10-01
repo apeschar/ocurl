@@ -132,6 +132,16 @@ module Pool = struct
       raise exn
     end
 
+  let abort t h =
+    match t.state, Hashtbl.find_opt t.wakeners h with
+    | Open, Some wakener ->
+      (* Removing a handle does not enqueue a completion message. Resolve the
+         waiter ourselves, normally rather than through Lwt cancellation. *)
+      M.remove t.mt h;
+      Hashtbl.remove t.wakeners h;
+      Lwt.wakeup_later wakener Curl.CURLE_ABORTED_BY_CALLBACK
+    | _ -> ()
+
   let cleanup t =
     match t.state with
     | Closing | Closed -> ()
@@ -152,7 +162,8 @@ module Pool = struct
       protect (fun () -> M.cleanup t.mt);
       t.state <- Closed;
       List.iter
-        (fun (_, wakener) -> Lwt.wakeup_exn wakener Lwt.Canceled)
+        (fun (_, wakener) ->
+          Lwt.wakeup_later wakener Curl.CURLE_ABORTED_BY_CALLBACK)
         active;
       begin match !first_error with
       | None -> ()
